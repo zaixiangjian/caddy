@@ -1,37 +1,25 @@
-# --- 第一阶段：编译 ---
-# 使用最新的 alpine 版本的 golang 镜像
-FROM golang:1.24-alpine AS builder
+# --- 第一阶段：使用官方 builder 环境进行插件注入编译 ---
+FROM caddy:2.8-builder AS builder
 
-# 强制 Go 即使在版本不匹配时也尝试下载需要的工具链
+# 解决你源码中可能存在的 Go 1.25+ 版本要求问题
 ENV GOTOOLCHAIN=auto
 
-# 安装编译 caddy 所需的依赖
-RUN apk add --no-cache git gcc musl-dev
-
-# 设置工作目录
+# 关键：xcaddy 构建指令
+# 1. --with 后跟的是你的 Cloudflare 插件模块名
+# 2. 第二个 --with 告诉编译器使用当前目录（/app）下的源码来编译 Caddy 核心
+# 这样就能把你对 Caddy 源码的修改和 Cloudflare 插件合二为一
 WORKDIR /app
-
-# 拷贝依赖文件
-COPY go.mod go.sum ./
-RUN go mod download
-
-# 拷贝所有源码
 COPY . .
 
-# 执行纯源码编译
-# LD_FLAGS 用于减小二进制体积
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o caddy ./cmd/caddy/main.go
+RUN xcaddy build \
+    --with github.com/caddy-dns/cloudflare \
+    --with github.com/caddyserver/caddy/v2=.
 
-# --- 第二阶段：运行 ---
-FROM alpine:latest
+# --- 第二阶段：生成极简运行镜像 ---
+FROM caddy:2.8-alpine
 
-RUN apk add --no-cache ca-certificates tzdata
-
-# 从编译阶段拷贝二进制文件
+# 从编译阶段拷贝成品二进制文件
 COPY --from=builder /app/caddy /usr/bin/caddy
 
-# 验证安装
-RUN caddy version
-
-# 运行指令
-CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+# 验证编译结果：显示版本并检查是否包含 cloudflare 模块
+RUN caddy version && caddy list-modules | grep cloudflare

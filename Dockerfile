@@ -1,29 +1,24 @@
-# --- 第一阶段：编译 ---
+# --- 使用官方 builder 镜像，它内部已经配置好了 Go 环境 ---
 FROM caddy:2.8-builder AS builder
 
+# 1. 设置代理（非常重要，保证拉取插件不超时）
+ENV GOPROXY=https://goproxy.cn,direct
 ENV GOTOOLCHAIN=auto
 
-# 1. 下载你的插件源码到 /plugins
-WORKDIR /plugins
-RUN git clone https://github.com/zaixiangjian/cloudflare.git cloudflare-src
-
-# 2. 进入主程序目录，使用你仓库里的 Caddy 源码
+# 2. 拷贝你的 Caddy 核心源码（如果你想用自己的核心）
 WORKDIR /app
 COPY . .
 
-# 3. 执行编译
-# 这里我们将 github.com/caddy-dns/cloudflare 映射到你本地克隆的路径
-# 将 github.com/caddyserver/caddy/v2 映射到当前目录 (.)
+# 3. 模仿一键脚本的编译逻辑
+# 指向你的 caddy 源码 (.) 并注入官方 cloudflare 插件
 RUN xcaddy build \
     --with github.com/caddyserver/caddy/v2=. \
-    --with github.com/caddy-dns/cloudflare=/plugins/cloudflare-src
+    --with github.com/caddy-dns/cloudflare
 
-# --- 第二阶段：运行 ---
+# --- 运行阶段 ---
 FROM caddy:2.8-alpine
 
 COPY --from=builder /app/caddy /usr/bin/caddy
 
-# 验证注入是否成功
-RUN caddy list-modules | grep -q "dns.providers.cloudflare" && echo "✅ 你的定制插件集成成功" || (echo "❌ 插件集成失败" && exit 1)
-
-RUN caddy version
+# 验证模块
+RUN caddy list-modules | grep -q "dns.providers.cloudflare" && echo "✅ 模块集成成功"
